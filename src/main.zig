@@ -12,17 +12,17 @@ const usage =
     \\Usage:
     \\  bfmediactl [info] [--source <substr>]      print the current session as JSON
     \\  bfmediactl list                            list sessions as JSON
-    \\  bfmediactl play|pause|toggle               transport control
-    \\  bfmediactl next|prev|stop                  transport control
-    \\  bfmediactl seek <ms>                       seek to a position
-    \\  bfmediactl shuffle <on|off>                toggle shuffle
-    \\  bfmediactl repeat <none|track|list>        set repeat mode
+    \\  bfmediactl play|pause|toggle [--source]    transport control
+    \\  bfmediactl next|prev|stop [--source]       transport control
+    \\  bfmediactl seek <ms> [--source]            seek to a position
+    \\  bfmediactl shuffle <on|off> [--source]     toggle shuffle
+    \\  bfmediactl repeat <none|track|list> [--source]  set repeat mode
     \\
     \\Options:
     \\  -s, --source <substr>   pick the session whose AUMID contains <substr>
     \\  -h, --help              show this help
     \\
-;
+    ;
 
 pub fn main() void {
     run() catch |e| {

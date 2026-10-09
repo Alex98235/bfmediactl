@@ -31,11 +31,12 @@ if the command isn't found yet.
 ```
 bfmediactl [info] [--source <substr>]      print the current session as JSON
 bfmediactl list                            list sessions as JSON
-bfmediactl play|pause|toggle               transport control
-bfmediactl next|prev|stop                  transport control
-bfmediactl seek <ms>                       seek to a position
-bfmediactl shuffle <on|off>                toggle shuffle
-bfmediactl repeat <none|track|list>        set repeat mode
+bfmediactl play|pause|toggle [--source]    transport control
+bfmediactl next|prev|stop [--source]       transport control
+bfmediactl seek <ms> [--source]            seek to a position
+bfmediactl shuffle <on|off> [--source]     toggle shuffle
+bfmediactl repeat <none|track|list> [--source]  set repeat mode
+
 ```
 
 Options:
