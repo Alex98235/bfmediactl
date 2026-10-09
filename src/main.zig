@@ -182,6 +182,46 @@ fn emitInfo(out: *Buf, info: *const smtc.Info) void {
     out.print(",\"trackNumber\":{d}", .{info.track_number});
     out.print(",\"positionMs\":{d}", .{info.positionMs()});
     out.print(",\"durationMs\":{d}", .{info.durationMs()});
+
+    out.append(",\"rate\":");
+    if (info.rate) |r| out.print("{d}", .{r}) else out.append("null");
+    out.append(",\"shuffle\":");
+    if (info.shuffle) |s| out.append(if (s) "true" else "false") else out.append("null");
+    out.append(",\"repeat\":");
+    if (info.repeat) |m| jsonEscape(out, m.name()) else out.append("null");
+    out.append(",\"playbackType\":");
+    if (info.playback_type) |t| jsonEscape(out, t.name()) else out.append("null");
+
+    emitCapabilities(out, info.capabilities);
+
+    out.append("}");
+}
+
+fn emitCapabilities(out: *Buf, caps: smtc.Capabilities) void {
+    const fields = .{
+        .{ "play", caps.play },
+        .{ "pause", caps.pause },
+        .{ "stop", caps.stop },
+        .{ "next", caps.next },
+        .{ "previous", caps.previous },
+        .{ "toggle", caps.toggle },
+        .{ "shuffle", caps.shuffle },
+        .{ "repeat", caps.repeat },
+        .{ "rate", caps.rate },
+        .{ "position", caps.position },
+        .{ "record", caps.record },
+        .{ "fastForward", caps.fast_forward },
+        .{ "rewind", caps.rewind },
+        .{ "channelUp", caps.channel_up },
+        .{ "channelDown", caps.channel_down },
+    };
+    out.append(",\"capabilities\":{");
+    inline for (fields, 0..) |f, i| {
+        if (i != 0) out.append(",");
+        jsonEscape(out, f[0]);
+        out.append(":");
+        out.append(if (f[1]) "true" else "false");
+    }
     out.append("}");
 }
 
@@ -225,4 +265,35 @@ fn jsonEscape(out: *Buf, s: []const u8) void {
         }
     }
     out.appendByte('"');
+}
+
+// -- Tests -------------------------------------------------------------------
+
+const testing = std.testing;
+
+test "containsIgnoreCase matches substrings case-insensitively" {
+    try testing.expect(containsIgnoreCase("Spotify.exe", "spotify"));
+    try testing.expect(containsIgnoreCase("SpotifyAB.SpotifyMusic_x!Spotify", "SPOTIFY"));
+    try testing.expect(containsIgnoreCase("anything", ""));
+    try testing.expect(!containsIgnoreCase("chrome.exe", "spotify"));
+    try testing.expect(!containsIgnoreCase("edge", "edgemore"));
+}
+
+test "jsonEscape quotes and escapes control characters" {
+    var out = Buf{};
+    jsonEscape(&out, "a\"b\\c\nd");
+    try testing.expectEqualStrings("\"a\\\"b\\\\c\\nd\"", out.slice());
+}
+
+test "emitInfo produces an object with nullable fields and capabilities" {
+    var info = smtc.Info{};
+    info.capabilities.play = true;
+    var out = Buf{};
+    emitInfo(&out, &info);
+    const s = out.slice();
+    try testing.expectEqual(@as(u8, '{'), s[0]);
+    try testing.expectEqual(@as(u8, '}'), s[s.len - 1]);
+    try testing.expect(std.mem.indexOf(u8, s, "\"rate\":null") != null);
+    try testing.expect(std.mem.indexOf(u8, s, "\"repeat\":null") != null);
+    try testing.expect(std.mem.indexOf(u8, s, "\"capabilities\":{\"play\":true,") != null);
 }

@@ -53,6 +53,57 @@ pub const Status = enum(u32) {
     }
 };
 
+/// Windows.Media.MediaPlaybackType.
+pub const PlaybackType = enum(i32) {
+    unknown = 0,
+    music = 1,
+    video = 2,
+    image = 3,
+
+    pub fn name(self: PlaybackType) []const u8 {
+        return switch (self) {
+            .unknown => "unknown",
+            .music => "music",
+            .video => "video",
+            .image => "image",
+        };
+    }
+};
+
+/// Windows.Media.MediaPlaybackAutoRepeatMode.
+pub const RepeatMode = enum(i32) {
+    none = 0,
+    track = 1,
+    list = 2,
+
+    pub fn name(self: RepeatMode) []const u8 {
+        return switch (self) {
+            .none => "none",
+            .track => "track",
+            .list => "list",
+        };
+    }
+};
+
+/// Which transport controls the source advertises for this session.
+pub const Capabilities = struct {
+    play: bool = false,
+    pause: bool = false,
+    stop: bool = false,
+    next: bool = false,
+    previous: bool = false,
+    toggle: bool = false,
+    shuffle: bool = false,
+    repeat: bool = false,
+    rate: bool = false,
+    position: bool = false,
+    record: bool = false,
+    fast_forward: bool = false,
+    rewind: bool = false,
+    channel_up: bool = false,
+    channel_down: bool = false,
+};
+
 pub const Info = struct {
     source: Fixed(256) = .{},
     status: Status = .closed,
@@ -63,6 +114,12 @@ pub const Info = struct {
     track_number: i32 = 0,
     position_ticks: i64 = 0,
     duration_ticks: i64 = 0,
+    /// Null when the source leaves the underlying IReference<T> unset.
+    rate: ?f64 = null,
+    shuffle: ?bool = null,
+    repeat: ?RepeatMode = null,
+    playback_type: ?PlaybackType = null,
+    capabilities: Capabilities = .{},
 
     pub fn positionMs(self: *const Info) i64 {
         return @divTrunc(self.position_ticks, 10_000);
@@ -103,7 +160,28 @@ const Slot = struct {
     const mp_track_number = 11;
     const mp_album_artist = 8;
     // IGlobalSystemMediaTransportControlsSessionPlaybackInfo
+    const pi_controls = 6;
     const pi_status = 7;
+    const pi_playback_type = 8;
+    const pi_repeat = 9;
+    const pi_rate = 10;
+    const pi_shuffle = 11;
+    // IGlobalSystemMediaTransportControlsSessionPlaybackControls
+    const pc_play = 6;
+    const pc_pause = 7;
+    const pc_stop = 8;
+    const pc_record = 9;
+    const pc_fast_forward = 10;
+    const pc_rewind = 11;
+    const pc_next = 12;
+    const pc_previous = 13;
+    const pc_channel_up = 14;
+    const pc_channel_down = 15;
+    const pc_toggle = 16;
+    const pc_shuffle = 17;
+    const pc_repeat = 18;
+    const pc_rate = 19;
+    const pc_position = 20;
     // IGlobalSystemMediaTransportControlsSessionTimelineProperties
     const tl_start = 6;
     const tl_end = 7;
@@ -205,6 +283,27 @@ pub fn readInfo(session: *anyopaque) Info {
         const GetStatus = winrt.method(pi, Slot.pi_status, *const fn (*anyopaque, *u32) callconv(WINAPI) HRESULT);
         var st: u32 = 0;
         if (GetStatus(pi, &st) >= 0 and st <= 5) info.status = @enumFromInt(st);
+
+        info.capabilities = readCapabilities(pi);
+        info.rate = readNullable(f64, pi, Slot.pi_rate);
+        if (readNullable(i32, pi, Slot.pi_shuffle)) |v| info.shuffle = v != 0;
+        if (readNullable(i32, pi, Slot.pi_repeat)) |v| {
+            info.repeat = switch (v) {
+                0 => .none,
+                1 => .track,
+                2 => .list,
+                else => null,
+            };
+        }
+        if (readNullable(i32, pi, Slot.pi_playback_type)) |v| {
+            info.playback_type = switch (v) {
+                0 => .unknown,
+                1 => .music,
+                2 => .video,
+                3 => .image,
+                else => null,
+            };
+        }
     }
 
     if (getMediaProperties(session)) |mp| {
@@ -232,6 +331,54 @@ pub fn readInfo(session: *anyopaque) Info {
         info.duration_ticks = end - start;
     }
     return info;
+}
+
+// -- Capabilities + nullable fields ------------------------------------------
+
+fn boolProp(obj: *anyopaque, comptime slot: usize) bool {
+    const Get = winrt.method(obj, slot, *const fn (*anyopaque, *i32) callconv(WINAPI) HRESULT);
+    var v: i32 = 0;
+    if (Get(obj, &v) < 0) return false;
+    return v != 0;
+}
+
+fn readCapabilities(pi: *anyopaque) Capabilities {
+    const GetControls = winrt.method(pi, Slot.pi_controls, *const fn (*anyopaque, *?*anyopaque) callconv(WINAPI) HRESULT);
+    var ctrl: ?*anyopaque = null;
+    if (GetControls(pi, &ctrl) < 0) return .{};
+    const c = ctrl orelse return .{};
+    defer winrt.release(c);
+    return .{
+        .play = boolProp(c, Slot.pc_play),
+        .pause = boolProp(c, Slot.pc_pause),
+        .stop = boolProp(c, Slot.pc_stop),
+        .next = boolProp(c, Slot.pc_next),
+        .previous = boolProp(c, Slot.pc_previous),
+        .toggle = boolProp(c, Slot.pc_toggle),
+        .shuffle = boolProp(c, Slot.pc_shuffle),
+        .repeat = boolProp(c, Slot.pc_repeat),
+        .rate = boolProp(c, Slot.pc_rate),
+        .position = boolProp(c, Slot.pc_position),
+        .record = boolProp(c, Slot.pc_record),
+        .fast_forward = boolProp(c, Slot.pc_fast_forward),
+        .rewind = boolProp(c, Slot.pc_rewind),
+        .channel_up = boolProp(c, Slot.pc_channel_up),
+        .channel_down = boolProp(c, Slot.pc_channel_down),
+    };
+}
+
+/// Unwrap a nullable `IReference<T>` getter. The out buffer is zero-initialized,
+/// so it is correct whether the ABI writes a 1- or 4-byte boolean.
+fn readNullable(comptime T: type, iface: *anyopaque, comptime slot: usize) ?T {
+    const Get = winrt.method(iface, slot, *const fn (*anyopaque, *?*anyopaque) callconv(WINAPI) HRESULT);
+    var ref: ?*anyopaque = null;
+    if (Get(iface, &ref) < 0) return null;
+    const r = ref orelse return null;
+    defer winrt.release(r);
+    const GetValue = winrt.method(r, 6, *const fn (*anyopaque, *T) callconv(WINAPI) HRESULT);
+    var out: T = std.mem.zeroes(T);
+    if (GetValue(r, &out) < 0) return null;
+    return out;
 }
 
 // -- Transport controls ------------------------------------------------------
@@ -300,11 +447,39 @@ pub fn setShuffle(session: *anyopaque, on: bool) ControlError!void {
     return finishBool(op);
 }
 
-pub const RepeatMode = enum(i32) { none = 0, track = 1, list = 2 };
-
 pub fn setRepeat(session: *anyopaque, mode: RepeatMode) ControlError!void {
     const Try = winrt.method(session, Slot.try_change_repeat, *const fn (*anyopaque, i32, *?*anyopaque) callconv(WINAPI) HRESULT);
     var op: ?*anyopaque = null;
     if (Try(session, @intFromEnum(mode), &op) < 0) return error.CallFailed;
     return finishBool(op);
+}
+
+// -- Tests (pure logic only; live-session paths need a running source) -------
+
+const testing = std.testing;
+
+test "Fixed copies, truncates, and reports its slice" {
+    var b = Fixed(4){};
+    b.set("abcdef");
+    try testing.expectEqualStrings("abcd", b.get());
+    b.set("hi");
+    try testing.expectEqualStrings("hi", b.get());
+    b.set("");
+    try testing.expectEqualStrings("", b.get());
+}
+
+test "enum names" {
+    try testing.expectEqualStrings("playing", Status.playing.name());
+    try testing.expectEqualStrings("paused", Status.paused.name());
+    try testing.expectEqualStrings("none", RepeatMode.none.name());
+    try testing.expectEqualStrings("list", RepeatMode.list.name());
+    try testing.expectEqualStrings("music", PlaybackType.music.name());
+}
+
+test "tick to millisecond conversion truncates" {
+    var info = Info{};
+    info.position_ticks = 12_345_678; // 100 ns ticks -> 1234.5678 ms
+    info.duration_ticks = 2_100_000_000; // -> 210000 ms
+    try testing.expectEqual(@as(i64, 1234), info.positionMs());
+    try testing.expectEqual(@as(i64, 210_000), info.durationMs());
 }
