@@ -1,0 +1,44 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Zig 0.17.0
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = '0.17.0'
+          $url = "https://ziglang.org/download/$version/zig-x86_64-windows-$version.zip"
+          $zip = Join-Path $env:RUNNER_TEMP 'zig.zip'
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          $dir = Join-Path $env:RUNNER_TEMP 'zig'
+          Expand-Archive -Path $zip -DestinationPath $dir -Force
+          $zigDir = (Get-ChildItem -Path $dir -Recurse -Filter zig.exe | Select-Object -First 1).DirectoryName
+          $zigDir | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Test
+        run: zig build test
+
+      - name: Build (ReleaseSafe)
+        run: zig build -Doptimize=ReleaseSafe
+
+      - name: Stage artifact
+        shell: pwsh
+        run: Copy-Item 'zig-out\bin\bfmediactl.exe' "bfmediactl-${{ github.ref_name }}-x86_64.exe"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: bfmediactl-${{ github.ref_name }}-x86_64.exe
+          generate_release_notes: true
