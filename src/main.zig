@@ -31,6 +31,19 @@ pub fn main() void {
     };
 }
 
+/// A resolved command line: the command name plus any trailing arguments.
+const Invocation = struct {
+    command: []const u8,
+    rest: []const []const u8,
+};
+
+/// Split parsed positionals into (command, rest), defaulting to "info" when no
+/// command was given. Pure (no WinRT), so it is unit-testable.
+fn resolveInvocation(args: []const []const u8) Invocation {
+    if (args.len == 0) return .{ .command = "info", .rest = args[0..0] };
+    return .{ .command = args[0], .rest = args[1..] };
+}
+
 fn run() !void {
     try winrt.init();
     defer winrt.deinit();
@@ -59,8 +72,9 @@ fn run() !void {
         }
     }
 
-    const command: []const u8 = if (pos_n == 0) "info" else positionals[0];
-    const rest = positionals[1..pos_n];
+    const inv = resolveInvocation(positionals[0..pos_n]);
+    const command = inv.command;
+    const rest = inv.rest;
 
     const manager = try smtc.acquireManager();
     defer winrt.release(manager);
@@ -270,6 +284,18 @@ fn jsonEscape(out: *Buf, s: []const u8) void {
 // -- Tests -------------------------------------------------------------------
 
 const testing = std.testing;
+
+test "resolveInvocation defaults to info and splits args" {
+    const none = resolveInvocation(&[_][]const u8{});
+    try testing.expectEqualStrings("info", none.command);
+    try testing.expectEqual(@as(usize, 0), none.rest.len);
+
+    const argv = [_][]const u8{ "seek", "1500" };
+    const inv = resolveInvocation(&argv);
+    try testing.expectEqualStrings("seek", inv.command);
+    try testing.expectEqual(@as(usize, 1), inv.rest.len);
+    try testing.expectEqualStrings("1500", inv.rest[0]);
+}
 
 test "containsIgnoreCase matches substrings case-insensitively" {
     try testing.expect(containsIgnoreCase("Spotify.exe", "spotify"));
