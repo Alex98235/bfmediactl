@@ -236,60 +236,75 @@ pub fn readInfo(session: *anyopaque) Info {
 
 // -- Transport controls ------------------------------------------------------
 
-fn invokeTryBool(session: *anyopaque, comptime slot: usize) bool {
-    const Try = winrt.method(session, slot, *const fn (*anyopaque, *?*anyopaque) callconv(WINAPI) HRESULT);
-    var op: ?*anyopaque = null;
-    if (Try(session, &op) < 0) return false;
-    const op_ptr = op orelse return false;
+/// Control-call failures, shared by every transport command.
+pub const ControlError = error{
+    /// The source refused the request (the async boolean result was false).
+    Rejected,
+    /// The call itself failed (bad HRESULT, null operation, or async failure).
+    CallFailed,
+};
+
+/// Await a completed `IAsyncOperation<bool>` and map its result.
+fn finishBool(op: ?*anyopaque) ControlError!void {
+    const op_ptr = op orelse return error.CallFailed;
     defer winrt.release(op_ptr);
-    winrt.awaitAsync(op_ptr) catch return false;
+    winrt.awaitAsync(op_ptr) catch return error.CallFailed;
     const GetResults = winrt.method(op_ptr, 8, *const fn (*anyopaque, *i32) callconv(WINAPI) HRESULT);
     var result: i32 = 0;
     _ = GetResults(op_ptr, &result);
-    return result != 0;
+    if (result == 0) return error.Rejected;
+}
+
+/// Invoke a no-argument `Try*Async` control and map its result.
+fn invokeTry(session: *anyopaque, comptime slot: usize) ControlError!void {
+    const Try = winrt.method(session, slot, *const fn (*anyopaque, *?*anyopaque) callconv(WINAPI) HRESULT);
+    var op: ?*anyopaque = null;
+    if (Try(session, &op) < 0) return error.CallFailed;
+    return finishBool(op);
 }
 
 pub const Action = enum { play, pause, toggle, next, previous, stop };
 
-pub fn action(session: *anyopaque, a: Action) bool {
+pub fn action(session: *anyopaque, a: Action) ControlError!void {
     return switch (a) {
-        .play => invokeTryBool(session, Slot.try_play),
-        .pause => invokeTryBool(session, Slot.try_pause),
-        .toggle => invokeTryBool(session, Slot.try_toggle),
-        .next => invokeTryBool(session, Slot.try_skip_next),
-        .previous => invokeTryBool(session, Slot.try_skip_previous),
-        .stop => invokeTryBool(session, Slot.try_stop),
+        .play => invokeTry(session, Slot.try_play),
+        .pause => invokeTry(session, Slot.try_pause),
+        .toggle => invokeTry(session, Slot.try_toggle),
+        .next => invokeTry(session, Slot.try_skip_next),
+        .previous => invokeTry(session, Slot.try_skip_previous),
+        .stop => invokeTry(session, Slot.try_stop),
     };
 }
 
-pub fn seek(session: *anyopaque, ms: i64) bool {
+/// Seek failures. `OutOfRange` is seek-specific; the rest are shared.
+pub const SeekError = error{OutOfRange} || ControlError;
+
+/// Seek to `ms` milliseconds from the start. `ms` is unsigned: a position is
+/// non-negative by definition. The WinRT call takes a signed `Int64` TimeSpan
+/// (100 ns ticks), so we range-check before narrowing.
+pub fn seek(session: *anyopaque, ms: u64) SeekError!void {
+    const max_ms: u64 = @intCast(@divTrunc(std.math.maxInt(i64), 10_000));
+    if (ms > max_ms) return error.OutOfRange;
+    const ticks: i64 = @intCast(ms * 10_000);
+
     const Try = winrt.method(session, Slot.try_change_position, *const fn (*anyopaque, i64, *?*anyopaque) callconv(WINAPI) HRESULT);
     var op: ?*anyopaque = null;
-    if (Try(session, ms * 10_000, &op) < 0) return false;
-    const op_ptr = op orelse return false;
-    defer winrt.release(op_ptr);
-    winrt.awaitAsync(op_ptr) catch return false;
-    return true;
+    if (Try(session, ticks, &op) < 0) return error.CallFailed;
+    return finishBool(op);
 }
 
-pub fn setShuffle(session: *anyopaque, on: bool) bool {
+pub fn setShuffle(session: *anyopaque, on: bool) ControlError!void {
     const Try = winrt.method(session, Slot.try_change_shuffle, *const fn (*anyopaque, i32, *?*anyopaque) callconv(WINAPI) HRESULT);
     var op: ?*anyopaque = null;
-    if (Try(session, if (on) 1 else 0, &op) < 0) return false;
-    const op_ptr = op orelse return false;
-    defer winrt.release(op_ptr);
-    winrt.awaitAsync(op_ptr) catch return false;
-    return true;
+    if (Try(session, if (on) 1 else 0, &op) < 0) return error.CallFailed;
+    return finishBool(op);
 }
 
 pub const RepeatMode = enum(i32) { none = 0, track = 1, list = 2 };
 
-pub fn setRepeat(session: *anyopaque, mode: RepeatMode) bool {
+pub fn setRepeat(session: *anyopaque, mode: RepeatMode) ControlError!void {
     const Try = winrt.method(session, Slot.try_change_repeat, *const fn (*anyopaque, i32, *?*anyopaque) callconv(WINAPI) HRESULT);
     var op: ?*anyopaque = null;
-    if (Try(session, @intFromEnum(mode), &op) < 0) return false;
-    const op_ptr = op orelse return false;
-    defer winrt.release(op_ptr);
-    winrt.awaitAsync(op_ptr) catch return false;
-    return true;
+    if (Try(session, @intFromEnum(mode), &op) < 0) return error.CallFailed;
+    return finishBool(op);
 }

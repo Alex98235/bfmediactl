@@ -100,18 +100,18 @@ fn run() !void {
         return;
     }
 
-    if (std.mem.eql(u8, command, "play")) return ok(smtc.action(session, .play));
-    if (std.mem.eql(u8, command, "pause")) return ok(smtc.action(session, .pause));
-    if (std.mem.eql(u8, command, "toggle")) return ok(smtc.action(session, .toggle));
-    if (std.mem.eql(u8, command, "next")) return ok(smtc.action(session, .next));
+    if (std.mem.eql(u8, command, "play")) return smtc.action(session, .play);
+    if (std.mem.eql(u8, command, "pause")) return smtc.action(session, .pause);
+    if (std.mem.eql(u8, command, "toggle")) return smtc.action(session, .toggle);
+    if (std.mem.eql(u8, command, "next")) return smtc.action(session, .next);
     if (std.mem.eql(u8, command, "prev") or std.mem.eql(u8, command, "previous"))
-        return ok(smtc.action(session, .previous));
-    if (std.mem.eql(u8, command, "stop")) return ok(smtc.action(session, .stop));
+        return smtc.action(session, .previous);
+    if (std.mem.eql(u8, command, "stop")) return smtc.action(session, .stop);
 
     if (std.mem.eql(u8, command, "seek")) {
         if (rest.len < 1) return error.MissingValue;
-        const ms = std.fmt.parseInt(i64, rest[0], 10) catch return error.InvalidValue;
-        return ok(smtc.seek(session, ms));
+        const ms = std.fmt.parseInt(u64, rest[0], 10) catch return error.InvalidValue;
+        return smtc.seek(session, ms);
     }
 
     if (std.mem.eql(u8, command, "shuffle")) {
@@ -122,7 +122,7 @@ fn run() !void {
             false
         else
             return error.InvalidValue;
-        return ok(smtc.setShuffle(session, on));
+        return smtc.setShuffle(session, on);
     }
 
     if (std.mem.eql(u8, command, "repeat")) {
@@ -135,14 +135,10 @@ fn run() !void {
             .list
         else
             return error.InvalidValue;
-        return ok(smtc.setRepeat(session, mode));
+        return smtc.setRepeat(session, mode);
     }
 
     return error.UnknownCommand;
-}
-
-fn ok(success: bool) !void {
-    if (!success) return error.ControlRejected;
 }
 
 fn selectSession(manager: *anyopaque, filter: ?[]const u8) ?*anyopaque {
