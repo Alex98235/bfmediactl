@@ -194,7 +194,7 @@ fn emitInfo(out: *Buf, info: *const smtc.Info) void {
     out.append(",\"albumArtist\":");
     jsonEscape(out, info.album_artist.get());
     out.print(",\"trackNumber\":{d}", .{info.track_number});
-    out.print(",\"positionMs\":{d}", .{info.positionMs()});
+    out.print(",\"positionMs\":{d}", .{info.positionMsLive(winrt.filetimeNow())});
     out.print(",\"durationMs\":{d}", .{info.durationMs()});
 
     out.append(",\"rate\":");

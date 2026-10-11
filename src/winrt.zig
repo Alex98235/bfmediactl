@@ -39,8 +39,18 @@ extern "kernel32" fn GetProcAddress(hModule: *anyopaque, lpProcName: [*:0]const 
 extern "kernel32" fn Sleep(dwMilliseconds: u32) callconv(WINAPI) void;
 extern "kernel32" fn GetStdHandle(nStdHandle: u32) callconv(WINAPI) ?*anyopaque;
 extern "kernel32" fn WriteFile(hFile: ?*anyopaque, lpBuffer: [*]const u8, nNumberOfBytesToWrite: u32, lpNumberOfBytesWritten: ?*u32, lpOverlapped: ?*anyopaque) callconv(WINAPI) i32;
+extern "kernel32" fn GetSystemTimePreciseAsFileTime(lpSystemTimeAsFileTime: *u64) callconv(WINAPI) void;
 
 const STD_OUTPUT_HANDLE: u32 = 0xFFFFFFF5; // (DWORD)-11
+
+/// Current UTC time as 100-ns FILETIME ticks since 1601-01-01. This is the same
+/// epoch and units as a WinRT `Windows.Foundation.DateTime` (e.g. SMTC's
+/// `LastUpdatedTime`), so the two can be subtracted directly.
+pub fn filetimeNow() i64 {
+    var ticks: u64 = 0;
+    GetSystemTimePreciseAsFileTime(&ticks);
+    return @bitCast(ticks);
+}
 
 // -- combase exports ---------------------------------------------------------
 

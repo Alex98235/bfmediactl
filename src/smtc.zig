@@ -114,6 +114,9 @@ pub const Info = struct {
     track_number: i32 = 0,
     position_ticks: i64 = 0,
     duration_ticks: i64 = 0,
+    /// UTC FILETIME ticks (100 ns since 1601) at which `position_ticks` was
+    /// current, i.e. the platform `LastUpdatedTime`.
+    last_updated_filetime: i64 = 0,
     /// Null when the source leaves the underlying IReference<T> unset.
     rate: ?f64 = null,
     shuffle: ?bool = null,
@@ -128,7 +131,46 @@ pub const Info = struct {
     pub fn durationMs(self: *const Info) i64 {
         return @divTrunc(self.duration_ticks, 10_000);
     }
+
+    /// Live playback position, interpolated from the platform snapshot.
+    /// `now` is the current UTC time in FILETIME ticks (see `winrt.filetimeNow`).
+    pub fn positionMsLive(self: *const Info, now: i64) i64 {
+        return interpolatePositionMs(
+            self.position_ticks,
+            self.last_updated_filetime,
+            now,
+            self.rate orelse 1.0,
+            self.status == .playing,
+            self.durationMs(),
+        );
+    }
 };
+
+/// Interpolate a live playback position from an SMTC timeline snapshot.
+///
+/// SMTC defines `Position` as "current as of `LastUpdatedTime`", so while the
+/// session is playing we advance it by the elapsed wall-clock time scaled by
+/// the playback rate. All time arguments are 100-ns FILETIME ticks since 1601
+/// UTC. `last_updated <= 0` means the source published no timeline: `Position`
+/// and `LastUpdatedTime` are both zero, so we fall back to the raw snapshot
+/// (extrapolating from the 1601 epoch would be meaningless). `duration_ms <= 0`
+/// means "unknown" and disables the upper clamp.
+fn interpolatePositionMs(
+    position_ticks: i64,
+    last_updated: i64,
+    now: i64,
+    rate: f64,
+    playing: bool,
+    duration_ms: i64,
+) i64 {
+    var ms: i64 = @divTrunc(position_ticks, 10_000);
+    if (playing and last_updated > 0) {
+        const elapsed: f64 = @floatFromInt(@max(now - last_updated, 0));
+        ms += @intFromFloat(elapsed / 10_000.0 * rate);
+    }
+    if (duration_ms > 0) ms = @min(ms, duration_ms);
+    return @max(ms, 0);
+}
 
 const Slot = struct {
     // IGlobalSystemMediaTransportControlsSessionManagerStatics
@@ -186,6 +228,7 @@ const Slot = struct {
     const tl_start = 6;
     const tl_end = 7;
     const tl_position = 10;
+    const tl_last_updated = 11;
 };
 
 /// Activate the session manager (RequestAsync -> manager). Caller releases.
@@ -321,14 +364,18 @@ pub fn readInfo(session: *anyopaque) Info {
         const GetStart = winrt.method(tl, Slot.tl_start, *const fn (*anyopaque, *i64) callconv(WINAPI) HRESULT);
         const GetEnd = winrt.method(tl, Slot.tl_end, *const fn (*anyopaque, *i64) callconv(WINAPI) HRESULT);
         const GetPos = winrt.method(tl, Slot.tl_position, *const fn (*anyopaque, *i64) callconv(WINAPI) HRESULT);
+        const GetLastUpdated = winrt.method(tl, Slot.tl_last_updated, *const fn (*anyopaque, *i64) callconv(WINAPI) HRESULT);
         var start: i64 = 0;
         var end: i64 = 0;
         var pos: i64 = 0;
+        var last_updated: i64 = 0;
         _ = GetStart(tl, &start);
         _ = GetEnd(tl, &end);
         _ = GetPos(tl, &pos);
+        _ = GetLastUpdated(tl, &last_updated);
         info.position_ticks = pos - start;
         info.duration_ticks = end - start;
+        info.last_updated_filetime = last_updated;
     }
     return info;
 }
@@ -482,4 +529,59 @@ test "tick to millisecond conversion truncates" {
     info.duration_ticks = 2_100_000_000; // -> 210000 ms
     try testing.expectEqual(@as(i64, 1234), info.positionMs());
     try testing.expectEqual(@as(i64, 210_000), info.durationMs());
+}
+
+const sec: i64 = 10_000_000; // 1 s in 100-ns ticks
+
+test "interpolatePositionMs converts ticks to milliseconds" {
+    try testing.expectEqual(@as(i64, 1234), interpolatePositionMs(12_345_678, 0, 0, 1.0, false, 0));
+}
+
+test "interpolatePositionMs passes through when paused" {
+    const got = interpolatePositionMs(5 * sec, 100 * sec, 200 * sec, 1.0, false, 0);
+    try testing.expectEqual(@as(i64, 5000), got);
+}
+
+test "interpolatePositionMs advances by elapsed * rate while playing" {
+    const got = interpolatePositionMs(5 * sec, 100 * sec, 103 * sec, 1.0, true, 0);
+    try testing.expectEqual(@as(i64, 8000), got);
+}
+
+test "interpolatePositionMs scales elapsed by non-unit rate" {
+    const got = interpolatePositionMs(5 * sec, 100 * sec, 103 * sec, 2.0, true, 0);
+    try testing.expectEqual(@as(i64, 11_000), got);
+}
+
+test "interpolatePositionMs clamps negative elapsed to zero" {
+    const got = interpolatePositionMs(5 * sec, 100 * sec, 90 * sec, 1.0, true, 0);
+    try testing.expectEqual(@as(i64, 5000), got);
+}
+
+test "interpolatePositionMs clamps at duration" {
+    const got = interpolatePositionMs(5 * sec, 100 * sec, 130 * sec, 1.0, true, 10_000);
+    try testing.expectEqual(@as(i64, 10_000), got);
+}
+
+test "interpolatePositionMs falls back to snapshot with no timeline" {
+    // playing but never published a timeline: Position and LastUpdatedTime are 0.
+    const got = interpolatePositionMs(5 * sec, 0, 1_000_000 * sec, 1.0, true, 0);
+    try testing.expectEqual(@as(i64, 5000), got);
+}
+
+test "Info.positionMsLive falls back to snapshot with no timeline" {
+    var info = Info{};
+    info.status = .playing;
+    info.position_ticks = 5 * sec;
+    info.last_updated_filetime = 0;
+    try testing.expectEqual(@as(i64, 5000), info.positionMsLive(1_000_000 * sec));
+}
+
+test "Info.positionMsLive reads the snapshot fields" {
+    var info = Info{};
+    info.status = .playing;
+    info.rate = 2.0;
+    info.position_ticks = 5 * sec;
+    info.duration_ticks = 60 * sec;
+    info.last_updated_filetime = 100 * sec;
+    try testing.expectEqual(@as(i64, 11_000), info.positionMsLive(103 * sec));
 }

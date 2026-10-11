@@ -104,8 +104,9 @@ source *publishes*:
   empty. Browsers often report only a page title.
 - **Controls are per-session.** The `capabilities` block tells you what the
   source supports; unsupported commands return `Rejected`.
-- **Timeline is a snapshot.** `positionMs` is current as of the source's last
-  timeline update and does not tick.
+- **Timeline is interpolated.** `positionMs` is derived from the platform's
+  timestamped snapshot (`Position` "current as of `LastUpdatedTime`") and, while
+  the session is `playing`, advanced by the elapsed time at the current `rate`. It is still only as fresh as the session's last timeline update: a source that never publishes a timeline reports `0`.
 - **Source ids differ in shape**: `Spotify.exe` (Win32) vs
   `SpotifyAB.SpotifyMusic_…!Spotify` (packaged) vs `MSEdge`/`chrome.exe`.
   `--source` substring matching handles all of them.
